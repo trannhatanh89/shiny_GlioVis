@@ -335,7 +335,6 @@ shinyServer(
     })
     
     #' Reactive function to generate the box plots
-    #' chekck for tydy eval strategies https://aosmith.rbind.io/2018/08/20/automating-exploratory-plots/
     box_Plot <- reactive({
       data <- filter_plot_data()
       xlabel <- paste("\n", input$myXlab)
@@ -642,7 +641,7 @@ shinyServer(
             p[[i]] <- survivalPlot(surv_data(), input$gene, group = input$histology, subtype = i, font.legend = input$surv_legend_size,
                                    input$riskTable, cutoff = input$cutoff, numeric = input$mInput, censor = input$censor, conf.int = input$confInt)$plot
           }
-          do.call(grid.arrange, args = list(grobs = p, nrow = nrow, ncol=2))
+          do.call(grid.arrange,args = list(grobs = p, nrow = nrow, ncol=2))
         }, silent = TRUE)
       } else {
         try(survivalPlot(surv_data(), input$gene, group = input$histology, subtype = input$subtype, font.legend = input$surv_legend_size,
@@ -695,30 +694,34 @@ shinyServer(
       surv_need ()
       req(input$histology %in% c("All", histo()))
       df <- surv_data()
-      surv.cut <- surv_cutpoint(data = df, time = "survival", event = "status", variables = "mRNA")
+      surv.cut <- surv_cutpoint(df, time = "survival", event = "status", variables = "mRNA")
       df.cat <<- surv.cut %>% surv_categorize()
       cutpoint <- list(surv.cut = surv.cut, df.cat = df.cat)
     })
     
     output$cutpointPlot <- renderPlot({
       df.cat <- cutpointData()[["df.cat"]]
-      fit <- surv_fit(Surv(survival, status) ~ mRNA, data = df.cat)
-      p1 <- plot(cutpointData()[["surv.cut"]])
-      p2 <- ggsurvplot(fit = fit, risk.table = FALSE, pval = TRUE, conf.int = input$confInt, font.legend = input$surv_legend_size,
+      fit <- survfit(Surv(survival, status) ~ mRNA, data = df.cat)
+      p1 <- plot.surv_cutpoint(cutpointData()[["surv.cut"]])
+      p2 <- ggsurvplot(data = df.cat,fit = fit, risk.table = FALSE, pval = TRUE, conf.int = input$confInt, font.legend = input$surv_legend_size,
                        legend = c(.75,.75), legend.title = paste("Cutoff:", round(cutpointData()[["surv.cut"]]$cutpoint,2)), surv.scale = "percent", font.x = 12, font.y = 12, font.main = 14, ylab = "Surviving",
                        main = "Kaplan Meier Survival Estimates", legend.labs = c(paste(input$gene, "High"), paste(input$gene, "Low")), censor = input$censor,
-                       xlab = "Survival time (Months)", data = df.cat)
+                       xlab = "Survival time (Months)")
+      # p2 <- ggsurvplot(fit = fit, risk.table = FALSE, pval = TRUE, conf.int = input$confInt, font.legend = input$surv_legend_size, 
+      #                  legend = c(.75,.75), legend.title = paste("Cutoff:", round(cutpointData()[["surv.cut"]]$cutpoint,2)), surv.scale = "percent", font.x = 12, font.y = 12, font.main = 14, ylab = "Surviving",
+      #                  main = "Kaplan Meier Survival Estimates", legend.labs = c(paste(input$gene, "High"), paste(input$gene, "Low")), censor = input$censor, 
+      #                  xlab = "Survival time (Months)")
       
       distribution <- ggplotGrob(p1[[1]]$distribution + theme(legend.position = "none"))
       maxstat <- ggplotGrob(p1[[1]]$maxstat + theme(legend.position = "none"))
       survival <- ggplotGrob(p2[[1]])
       
-      grid.arrange(distribution, maxstat, survival)
+      grid::grid.draw(rbind(distribution, maxstat, survival))
     })
     
     output$cutpointDataTable <- DT::renderDataTable({
       data <- cutpointData()[["df.cat"]]
-      # data <- dplyr::rename(data, survival_month = survival, survival_status = status) # this is throwing errors
+      # data <- dplyr::rename(data, survival_month = survival, survival_status = status)
       data_table(data, rownames = T)
     }, server = FALSE)
     
@@ -800,7 +803,7 @@ shinyServer(
     output$kmPlot <- renderPlot({
       req(histo_selected() == "GBM")
       surv_need()
-      kmPlot(data = surv_GBM(), cutoff = get_Cutoff(), surv = survival_Fml(), censor = input$censor, conf.int = input$confInt, font.legend = input$surv_legend_size, input$riskTable)
+      kmPlot(cutoff = get_Cutoff(), surv = survival_Fml(), censor = input$censor, conf.int = input$confInt, font.legend = input$surv_legend_size, input$riskTable)
     }, height = surv_plot_height)
     
     #' Download the kmPlot
@@ -1328,13 +1331,13 @@ shinyServer(
       g <- plotly::plotly_build(p)
       
       #Match order of text to proper gene order
-      newtext =  paste("Gene ID:",de_data$Gene_symbol,"<br />",
-                       "logFC:",signif(de_data$logFC,3),"<br />",
-                       "P.Value:",signif(de_data$P.Value,3),"<br />",
+      newtext =  paste("Gene ID:",de_data$Gene_symbol,"<br>",
+                       "logFC:",signif(de_data$logFC,3),"<br>",
+                       "P.Value:",signif(de_data$P.Value,3),"<br>",
                        "adj.P.Val:",signif(de_data$adj.P.Val,3))
-
+      
       for(ii in 1:length(g[["x"]]$data)) {
-        tmpid = do.call(rbind,strsplit(g[[1]]$data[[ii]]$text,"<br />"))[,4]
+        tmpid = do.call(rbind,strsplit(g[[1]]$data[[ii]]$text,"<br>"))[,4]
         g[[1]]$data[[ii]]$text <- newtext[match(tmpid,de_data$Gene_symbol)]
       }
       
@@ -1629,8 +1632,10 @@ shinyServer(
             df1 <- na.omit(data.frame(status = df[ ,"status"], time = df[ ,"survival"], strata = df[ ,my_Survi]))
             df1$strata <- droplevels(df1$strata)
             fit <- do.call(survfit, list(formula = Surv(time, status == 1) ~ strata, data = df1))
-            survminer::ggsurvplot(fit = fit, legend = c(0.75,0.75), surv.scale = "percent", ylab = "Surviving", legend.labs = levels(df1$strata), 
-                                  xlab = "Survival time (Months)", main = paste0("\n",my_Survi), legend.title = "", font.legend = 12, palette = "Set1", data = df1)
+            # survminer::ggsurvplot(data = df1, fit = fit, legend = c(0.75,0.75), surv.scale = "percent", ylab = "Surviving", legend.labs = levels(df1$strata), color = "red",
+            #                       xlab = "Survival time (Months)", main = paste0("\n",my_Survi), legend.title = "", font.legend = 12, palette = "Set1")
+            survminer::ggsurvplot(fit = fit, legend = c(0.75,0.75), surv.scale = "percent", ylab = "Surviving", legend.labs = levels(df1$strata), color = "red",
+                                  xlab = "Survival time (Months)", main = paste0("\n",my_Survi), legend.title = "", font.legend = 12, palette = "Set1")
           })
           plotname <- paste("plot", my_Survi, sep="")
           output[[plotname]] <- googleVis::renderGvis({
@@ -1978,8 +1983,4 @@ shinyServer(
         write.table(.rmNA(pDatas()), file, sep = "\t", row.names = FALSE)
       }
     )
-    
-    output$sessionInfo <- renderPrint({
-      capture.output(sessionInfo())
-    })
   })
