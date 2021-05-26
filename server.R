@@ -285,6 +285,14 @@ shinyServer(
         }
       }
       
+      if(input$dataset == "CGGA"){
+        if(input$primaryCgga != "All"){
+          data <- subset(data, Recurrence == input$primaryCgga)
+        } else {
+          data
+        }
+      }
+      
       rownames(data) <- data$Sample
       data <- data[complete.cases(data[,"mRNA"]),] # Aiglent TCGA_GBM data doesn't have all the observations
       data
@@ -368,7 +376,10 @@ shinyServer(
           scale_x_discrete(labels = abbreviate) + theme
         p <- grid.arrange(p, t, ncol=2, widths = c(3,2))
       }
-      
+      # 
+      # if(input$dataset == "CGGA"){
+      #   p <- p + facet_grid(~Recurrence, scales = "free_x")
+      # }
       return(p)
       
     })
@@ -519,22 +530,11 @@ shinyServer(
     )
     
     #' Observers for the conditonal panels to work in the proper way
-    # observeEvent(input$histology != "GBM", {
-    #   updateCheckboxInput(session, "primarySurv", value = FALSE)
-    #   updateCheckboxInput(session, "gcimpSurv", value = FALSE)
-    # })
-    # observeEvent(input$dataset =="TCGA_GBMLGG", {
-    #   updateCheckboxInput(session, "gcimpSurv", value = FALSE)
-    # })
     observeEvent(input$histology != "GBM", {
       updateRadioButtons(session, "primarySurv", selected = "All")
-      updateRadioButtons(session, "gcimpSurv",  selected = "All")
       updateRadioButtons(session, "mgmtSurv",  selected = "All")
     })
-    observeEvent(input$dataset =="TCGA_GBMLGG", {
-      updateRadioButtons(session, "gcimpSurv",  selected = "All")
-    })
-    
+
     observeEvent(!input$dataset %in% c("TCGA_GBM","Murat"), {
       updateRadioButtons(session, "mgmtSurv",  selected = "All")
     })
@@ -543,30 +543,88 @@ shinyServer(
       updateCheckboxInput(session, "allSubSurv", value = FALSE)
     })
     
+    #' Select gender
+    output$genderSurv <- renderUI({
+      req("Gender" %in% names(data()))
+      selectInput(inputId ="genderSurv", label = h4("Gender:"),
+                  choices = c("All","Female","Male"), selected = "All")
+    })
+    
+    #' Select IDH status
+    #' I couldn find a way to use the renderUI and the observeEvent to work correctly from the server side
+    # output$idhSurv <- renderUI({
+    #   req(input$dataset %in% c("CGGA","TCGA_GBM", "TCGA_LGG", "TCGA_GBMLGG","Gorovets","Gravendeel",
+    #                            "POLA_Network","Kamoun"))
+    #   selectInput(inputId ="idhSurv", label = h4("IDH status:"), 
+    #               choices = c("All","Wild_type","Mutant"), selected = "All")
+    # })
+    # 
+    observeEvent(!input$dataset %in% c("CGGA","TCGA_GBM", "TCGA_LGG", "TCGA_GBMLGG","Gorovets","Gravendeel",
+                                       "POLA_Network","Kamoun"), {
+                                         updateSelectInput(session, "idhSurv",  selected = "All")
+                                       })
+    #' Select CIMP status
+    # output$gcimpSurv <- renderUI({
+    #   req(input$dataset %in% c("Rembrandt","LeeY", "Phillips", "Freije","Murat","Joo", "Ducray",
+    #                            "Nutt", "Vital","Grzmil","Donson"))
+    #   radioButtons(inputId ="gcimpSurv", label = strong("CIMP stauts:"), choices = c("All","G-CIMP","NON G-CIMP"), selected = "All", inline = T)
+    # })
+
+    observeEvent(!input$dataset %in% c("Rembrandt","LeeY", "Phillips", "Freije","Murat","Joo", "Ducray",
+                                       "Nutt","Grzmil","Donson"), {
+                                         updateRadioButtons(session, "gcimpSurv",  selected = "All")
+                                       })
+
     #' Extract the survival data.
     surv_data <- reactive({
       df <- data()
       df <- subset(df, !is.na(df$status))
-      if (input$histology != "All"){
+      df <- df[ ,names(df) %in% c("Sample", "Histology", "Recurrence", "Subtype", "CIMP_status", 
+                                  "mRNA",  "survival", "status", "Gender", "MGMT_status","IDH_status","IDH1_status", 
+                                  "IDH2_status", "IDH.status")]
+      
+      if(input$dataset %in% c("CGGA","TCGA_GBM", "TCGA_GBMLGG","Gorovets","Gravendeel","POLA_Network","Kamoun")){
+        # df <- rename(df, IDH_status = starts_with("IDH"))
+        names(df)[grepl("IDH", names(df))] <- "IDH_status"
+        df$IDH_status <- ifelse(df$IDH_status %in% c("Wild-type","Wildtype","Wild_type","WT","IDHwt"), "Wild_type",
+                                ifelse(df$IDH_status %in% c("Mutant","Mut","IDHmut-codel","IDHmut-non-codel"),"Mutant",df$IDH_status))
+      } else if(input$dataset == "TCGA_LGG"){
+        # TCGA_LGG has both IDH1 and IDH2 mutation info
+        df$IDH_status <- ifelse(df$IDH1_status== "Mutant" | df$IDH2_status == "Mutant", "Mutant",
+                                ifelse(df$IDH1_status== "Wild-type" | df$IDH2_status == "Wild-type","Wild_type",NA)) 
+      }
+      # select IDH status
+      if(input$idhSurv != "All"){
+        df <- subset(df, IDH_status == input$idhSurv)
+      } 
+      # select Gender
+      if("Gender" %in% names(data())){
+        if(input$genderSurv != "All"){
+          df$Gender <- trimws(df$Gender, which = "right") # e.g.:"Female "
+          df <- subset(df, Gender == input$genderSurv)
+        } 
+      }
+      # select Histology
+      if(input$histology != "All"){
         df <- subset(df, Histology == input$histology)
       }
+      # select Subtype
       if (input$subtype != "All") {
         df <- subset(df, Subtype == input$subtype)
       }
       # select G-CIMP status
-      if (input$gcimpSurv != "All"){
+      if(input$gcimpSurv != "All"){
         df <- subset(df, CIMP_status == input$gcimpSurv)
       }
       # select MGMT status
-      if (input$mgmtSurv != "All"){
+      if(input$mgmtSurv != "All"){
         df <- subset(df, MGMT_status == input$mgmtSurv)
       }
       # select primary sample
-      if (input$primarySurv != "All" & any(!is.na(df$Recurrence))) {
+      if(input$primarySurv != "All" & any(!is.na(df$Recurrence))) {
         df <- subset(df, Recurrence == input$primarySurv)
       }
-      data <- df[ ,names(df) %in% c("Sample", "Histology", "Recurrence", "Subtype", "CIMP_status", "mRNA",  "survival", "status")]
-      data <- .rmNA(data)
+      df <- .rmNA(df)
     })
     
     #' Create a slider for the manual cutoff of the Kaplan Meier plot
@@ -637,12 +695,13 @@ shinyServer(
       if(input$allSubSurv) {
         nrow <- ceiling(length(subtype())/2)
         try({
-          p <- list()
+          # p <- list()
+          p <- vector("list", length(subtype()))
           for (i in subtype()) {
             p[[i]] <- survivalPlot(surv_data(), input$gene, group = input$histology, subtype = i, font.legend = input$surv_legend_size,
                                    input$riskTable, cutoff = input$cutoff, numeric = input$mInput, censor = input$censor, conf.int = input$confInt)$plot
           }
-          do.call(grid.arrange, args = list(grobs = p, nrow = nrow, ncol=2))
+          do.call(grid.arrange, args = list(grobs = p, nrow = 1, ncol=2))
         }, silent = TRUE)
       } else {
         try(survivalPlot(surv_data(), input$gene, group = input$histology, subtype = input$subtype, font.legend = input$surv_legend_size,
@@ -702,18 +761,27 @@ shinyServer(
     
     output$cutpointPlot <- renderPlot({
       df.cat <- cutpointData()[["df.cat"]]
-      fit <- surv_fit(Surv(survival, status) ~ mRNA, data = df.cat)
-      p1 <- plot(cutpointData()[["surv.cut"]])
+      fit <- survfit(Surv(survival, status) ~ mRNA, data = df.cat)
+      p1 <- plot.surv_cutpoint(cutpointData()[["surv.cut"]])
       p2 <- ggsurvplot(fit = fit, risk.table = FALSE, pval = TRUE, conf.int = input$confInt, font.legend = input$surv_legend_size,
                        legend = c(.75,.75), legend.title = paste("Cutoff:", round(cutpointData()[["surv.cut"]]$cutpoint,2)), surv.scale = "percent", font.x = 12, font.y = 12, font.main = 14, ylab = "Surviving",
                        main = "Kaplan Meier Survival Estimates", legend.labs = c(paste(input$gene, "High"), paste(input$gene, "Low")), censor = input$censor,
-                       xlab = "Survival time (Months)", data = df.cat)
+                       xlab = "Survival time (Months)")
+      # fit <- surv_fit(Surv(survival, status) ~ mRNA, data = df.cat)
+      # p1 <- plot(cutpointData()[["surv.cut"]])
+      # p2 <- ggsurvplot(fit = fit, risk.table = FALSE, pval = TRUE, conf.int = input$confInt, font.legend = input$surv_legend_size,
+      #                  legend = c(.75,.75), legend.title = paste("Cutoff:", round(cutpointData()[["surv.cut"]]$cutpoint,2)), surv.scale = "percent", font.x = 12, font.y = 12, font.main = 14, ylab = "Surviving",
+      #                  main = "Kaplan Meier Survival Estimates", legend.labs = c(paste(input$gene, "High"), paste(input$gene, "Low")), censor = input$censor,
+      #                  xlab = "Survival time (Months)", data = df.cat)
+
       
       distribution <- ggplotGrob(p1[[1]]$distribution + theme(legend.position = "none"))
       maxstat <- ggplotGrob(p1[[1]]$maxstat + theme(legend.position = "none"))
       survival <- ggplotGrob(p2[[1]])
       
-      grid.arrange(distribution, maxstat, survival)
+      grid::grid.draw(rbind(distribution, maxstat, survival))
+      
+      # grid.arrange(distribution, maxstat, survival)
     })
     
     output$cutpointDataTable <- DT::renderDataTable({
@@ -723,13 +791,14 @@ shinyServer(
     }, server = FALSE)
     
     #' Subset to GBM samples for the interactive HR plot.
-    surv_GBM <- reactive({
-      df <- filter(surv_data(), Histology == "GBM")
-    })
+    # surv_GBM <- reactive({
+    #   df <- filter(surv_data(), Histology == "GBM")
+    # })
     
     #' Extract the GBM expression values for the interactive HR plot.
     gene_exp <- reactive({
-      geneExp <- surv_GBM()[ ,"mRNA"]
+      # geneExp <- surv_GBM()[ ,"mRNA"]
+      geneExp <- surv_data()[ ,"mRNA"]
       currentClick$stale <<- TRUE
       geneExp
     })
@@ -760,14 +829,18 @@ shinyServer(
     
     #' Extract the Hazard ratios for the input gene.
     HR <- reactive ({
-      HR <- getHR(surv_GBM())
+      # HR <- getHR(surv_GBM())
+      HR <- getHR(surv_data())
     })
     
     #' Render a plot to show the the Hazard ratio for the gene's expression values
     output$hazardPlot <- renderPlot({
-      validate(need(input$dataset %notin% c("TCGA_LGG","Gorovets","POLA Network"), "Interactive HR plot currently available only for GBM samples") %then%
-                 need(histo_selected() == "GBM","Please select GBM samples in the 'Histology' dropdown menu") %then%
-                 need(input$dataset %notin% c("Grzmil","Vital"), "Sorry, too few samples to properly render the HR plot"))
+      # validate(need(input$dataset %notin% c("TCGA_LGG","Gorovets","POLA Network"), "Interactive HR plot currently available only for GBM samples") %then%
+      #            need(histo_selected() == "GBM","Please select GBM samples in the 'Histology' dropdown menu") %then%
+      #            need(input$dataset %notin% c("Grzmil","Vital"), "Sorry, too few samples to properly render the HR plot"))
+      validate(
+        need(dim(surv_data())>30 , "Sorry, too few samples to properly calculate and render the HR plot")
+        )
       surv_need()
       input$tabSurv
       # Plot the hazardplot
@@ -778,9 +851,12 @@ shinyServer(
     
     #' Data used to generate the HR plot
     output$hazardDataTable <- DT::renderDataTable({
-      validate(need(input$dataset %notin% c("TCGA_LGG","Gorovets","POLA Network"), "Interactive HR plot currently available only for GBM samples") %then%
-                 need(histo_selected() == "GBM","Please select GBM samples in the 'Histology' dropdown menu") %then%
-                 need(input$dataset %notin% c("Grzmil","Vital"), "Sorry, too few samples to properly render the HR plot"))
+      # validate(need(input$dataset %notin% c("TCGA_LGG","Gorovets","POLA Network"), "Interactive HR plot currently available only for GBM samples") %then%
+      #            need(histo_selected() == "GBM","Please select GBM samples in the 'Histology' dropdown menu") %then%
+      #            need(input$dataset %notin% c("Grzmil","Vital"), "Sorry, too few samples to properly render the HR plot"))
+      validate(
+        need(input$dataset %notin% c("Grzmil","Vital"), "Sorry, too few samples to properly render the HR plot")
+      )
       surv_need()
       data <- round(HR(),3)
       names(data) <- c("mRNA", "HR", "HR.lower", "HR.upper", "n.obs.1", "n.obs.2")
@@ -792,15 +868,22 @@ shinyServer(
       # Create the groups based on which samples are above/below the cutoff
       expressionGrp <- as.integer(gene_exp() < get_Cutoff())
       # Create the survival object
-      surv <- with(surv_GBM(), Surv(survival, status == 1))
+      # surv <- with(surv_GBM(), Surv(survival, status == 1))
+      surv <- with(surv_data(), Surv(survival, status == 1))
       return(surv ~ expressionGrp)
     })
     
     #' Create a Kaplan Meier plot on the HR cutoff
     output$kmPlot <- renderPlot({
-      req(histo_selected() == "GBM")
+      validate(
+        need(input$dataset %notin% c("Grzmil","Vital"), "Sorry, too few samples to properly render the HR plot")
+      )
+      # req(histo_selected() == "GBM")
       surv_need()
-      kmPlot(data = surv_GBM(), cutoff = get_Cutoff(), surv = survival_Fml(), censor = input$censor, conf.int = input$confInt, font.legend = input$surv_legend_size, input$riskTable)
+      # kmPlot(data = surv_GBM(), cutoff = get_Cutoff(), surv = survival_Fml(), censor = input$censor, conf.int = input$confInt, 
+      #        font.legend = input$surv_legend_size, input$riskTable)
+      kmPlot(data = surv_data(), cutoff = get_Cutoff(), surv = survival_Fml(), censor = input$censor, conf.int = input$confInt, 
+             font.legend = input$surv_legend_size, input$riskTable)
     }, height = surv_plot_height)
     
     #' Download the kmPlot
@@ -814,7 +897,10 @@ shinyServer(
         if(download_plot_file_type()!="pdf"){
           plotFunction(file, width = download_plot_width(), height =  download_plot_height(),res = download_plot_res())
         }
-        kmPlot(cutoff = get_Cutoff(), surv = survival_Fml(), censor = input$censor, conf.int = input$confInt, font.legend = input$surv_legend_size, input$riskTable)
+        # kmPlot(data = surv_GBM(), cutoff = get_Cutoff(), surv = survival_Fml(), censor = input$censor, conf.int = input$confInt, 
+        #        font.legend = input$surv_legend_size, input$riskTable)
+        kmPlot(data = surv_data(), cutoff = get_Cutoff(), surv = survival_Fml(), censor = input$censor, conf.int = input$confInt, 
+               font.legend = input$surv_legend_size, input$riskTable)
         dev.off()
       }
     )
@@ -836,6 +922,13 @@ shinyServer(
     
     corr_data <- reactive({
       df <- exprs()
+      if(input$dataset == "CGGA"){
+        if(input$primaryCgga != "All"){
+          df <- subset(df, Recurrence == input$primaryCgga)
+        } else {
+          df
+        }
+      }
       if (input$histology != "All") {
         df <- subset(df, Histology == input$histology)
       }
@@ -1328,15 +1421,27 @@ shinyServer(
       g <- plotly::plotly_build(p)
       
       #Match order of text to proper gene order
-      newtext =  paste("Gene ID:",de_data$Gene_symbol,"<br />",
-                       "logFC:",signif(de_data$logFC,3),"<br />",
-                       "P.Value:",signif(de_data$P.Value,3),"<br />",
+      newtext =  paste("Gene ID:",de_data$Gene_symbol,"<br>",
+                       "logFC:",signif(de_data$logFC,3),"<br>",
+                       "P.Value:",signif(de_data$P.Value,3),"<br>",
                        "adj.P.Val:",signif(de_data$adj.P.Val,3))
-
+      
       for(ii in 1:length(g[["x"]]$data)) {
-        tmpid = do.call(rbind,strsplit(g[[1]]$data[[ii]]$text,"<br />"))[,4]
+        tmpid = do.call(rbind,strsplit(g[[1]]$data[[ii]]$text,"<br>"))[,4]
         g[[1]]$data[[ii]]$text <- newtext[match(tmpid,de_data$Gene_symbol)]
       }
+      
+      # #TO UPDATE WITH PAKAGES UPDATE
+      # #Match order of text to proper gene order
+      # newtext =  paste("Gene ID:",de_data$Gene_symbol,"<br />",
+      #                  "logFC:",signif(de_data$logFC,3),"<br />",
+      #                  "P.Value:",signif(de_data$P.Value,3),"<br />",
+      #                  "adj.P.Val:",signif(de_data$adj.P.Val,3))
+      # 
+      # for(ii in 1:length(g[["x"]]$data)) {
+      #   tmpid = do.call(rbind,strsplit(g[[1]]$data[[ii]]$text,"<br />"))[,4]
+      #   g[[1]]$data[[ii]]$text <- newtext[match(tmpid,de_data$Gene_symbol)]
+      # }
       
       g
     })
@@ -1629,8 +1734,10 @@ shinyServer(
             df1 <- na.omit(data.frame(status = df[ ,"status"], time = df[ ,"survival"], strata = df[ ,my_Survi]))
             df1$strata <- droplevels(df1$strata)
             fit <- do.call(survfit, list(formula = Surv(time, status == 1) ~ strata, data = df1))
-            survminer::ggsurvplot(fit = fit, legend = c(0.75,0.75), surv.scale = "percent", ylab = "Surviving", legend.labs = levels(df1$strata), 
-                                  xlab = "Survival time (Months)", main = paste0("\n",my_Survi), legend.title = "", font.legend = 12, palette = "Set1", data = df1)
+            # survminer::ggsurvplot(fit = fit, legend = c(0.75,0.75), surv.scale = "percent", ylab = "Surviving", legend.labs = levels(df1$strata), #color = "red",
+            #                       xlab = "Survival time (Months)", main = paste0("\n",my_Survi), legend.title = "", font.legend = 12, palette = "Set1", data = df1)
+            survminer::ggsurvplot(fit = fit, legend = c(0.75,0.75), surv.scale = "percent", ylab = "Surviving", legend.labs = levels(df1$strata), color = "red",
+                                  xlab = "Survival time (Months)", main = paste0("\n",my_Survi), legend.title = "", font.legend = 12, palette = "Set1")
           })
           plotname <- paste("plot", my_Survi, sep="")
           output[[plotname]] <- googleVis::renderGvis({
